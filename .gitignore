@@ -6,7 +6,6 @@ simulation
 hc_output
 scaler
 hps_isw_handoff
-vip
 Lite Builds
 *_sim
 .qsys_edit
