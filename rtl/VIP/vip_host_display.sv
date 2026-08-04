@@ -1754,8 +1754,10 @@ module vip_display_subsystem
 	wire        native_capture_raster_generation_valid_w
 		/* verilator public_flat_rd */;
 	wire [15:0] native_capture_raster_data_w;
-	wire        native_capture_protocol_error_w;
-	wire        native_capture_unexpected_response_w;
+	wire        native_capture_protocol_error_w
+		/* verilator public_flat_rd */;
+	wire        native_capture_unexpected_response_w
+		/* verilator public_flat_rd */;
 	wire        presentation_raster_commit_w;
 	wire        scanout_read_enable_w;
 	wire [15:0] scanout_read_addr_w;
@@ -2023,11 +2025,10 @@ module vip_display_subsystem
 		snapshot_framebuffer_capture_idle_o &&
 		(!CAPTURE_ENABLED ||
 		 native_capture_raster_pipeline_empty_w);
+	// Sticky presentation diagnostics describe a past dropped frame or bad
+	// response; they are not live owners and must not make pause unreachable.
 	assign snapshot_event_coherent_o = (event_o == 16'd0) &&
-		event_levels_coherent_w &&
-		(!CAPTURE_ENABLED ||
-		 (!native_capture_protocol_error_w &&
-		  !native_capture_unexpected_response_w));
+		event_levels_coherent_w;
 	assign brightness_worker_owner_active_o =
 		!brightness_worker_quiescent_w;
 	assign brightness_allocator_owner_active_o =

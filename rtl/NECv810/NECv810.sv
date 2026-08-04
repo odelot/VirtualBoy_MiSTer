@@ -1292,6 +1292,12 @@ module NECv810
 		async_exception_kind_fn(1'b0, nmi_accept_w, !posted_write_busy_w && irq_accept_now_w);
 	wire [1:0]  long_async_exc_kind_w =
 		long_abortable_final_w ? abort_async_exc_kind_w : ASYNC_EXC_NONE;
+	// A retained retire pulse may overlap the already-selected successor. Keep
+	// every iterative engine idle on the edge that redirects the parent into
+	// checkpoint hold, otherwise that successor has no STATE_LONG finish edge.
+	wire        savestate_hold_enter_w = savestate_pause_req_i &&
+		(savestate_boundary_pending_q || trace_valid_o ||
+		 (halted_q && !active_q && !store_pending_w));
 	wire        int_engine_active_kind_w =
 		(long_kind_q == LONG_MUL) || (long_kind_q == LONG_MULU) ||
 		(long_kind_q == LONG_MPYHW) || (long_kind_q == LONG_DIV) ||
@@ -1302,6 +1308,7 @@ module NECv810
 		(ucode_alu_op_w == LONG_DIVU) || (ucode_alu_op_w == LONG_REV);
 	wire        int_engine_start_w =
 		(state_q == STATE_EXEC) && !hldrq_i && (ucode_kind_w == MK_LONG) &&
+		!savestate_hold_enter_w &&
 		int_engine_launch_kind_w && !int_engine_busy_w &&
 		!(((ucode_alu_op_w == LONG_DIV) || (ucode_alu_op_w == LONG_DIVU)) &&
 		  (exec_reg1_val_q == 32'd0));
@@ -1322,6 +1329,7 @@ module NECv810
 		(ucode_alu_op_w == LONG_ADDF) || (ucode_alu_op_w == LONG_SUBF);
 	wire        fp_engine_start_w =
 		(state_q == STATE_EXEC) && !hldrq_i && (ucode_kind_w == MK_LONG) &&
+		!savestate_hold_enter_w &&
 		fp_engine_launch_kind_w && !fp_engine_busy_w;
 	wire        fp_engine_kill_w =
 		(state_q == STATE_LONG) && fp_engine_active_kind_w &&
@@ -2736,9 +2744,7 @@ module NECv810
 						bs_seq_active_q <= 1'b0;
 					end
 					// Stop at retire, then drain posted bus and register-file writes.
-					if (savestate_pause_req_i &&
-						(savestate_boundary_pending_q || trace_valid_o ||
-						 (halted_q && !active_q && !store_pending_w))) begin
+					if (savestate_hold_enter_w) begin
 						state_q <= STATE_SAVESTATE_HOLD;
 						savestate_boundary_pending_q <= 1'b0;
 						invalidate_line_window_task;
