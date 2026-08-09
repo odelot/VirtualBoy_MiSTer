@@ -44,6 +44,11 @@ module virtualboy
 	input  wire         cheat_clear_i,
 	input  wire [128:0] cheat_code_i,
 
+	// RetroAchievements: dedicated read-only WRAM port (BRAM port B).
+	input  wire [14:0]  ra_wram_addr_i,
+	output wire [7:0]   ra_wram_udata_o,
+	output wire [7:0]   ra_wram_ldata_o,
+
 	input  wire [15:0]  pad_buttons_i,
 	input  wire         cart_irq_i,
 	input  wire         rumble_enable_i,
@@ -577,27 +582,36 @@ module virtualboy
 
 	// The Virtual Boy WRAM has a fixed one-wait interface. Keeping its two byte
 	// lanes in local block RAM makes that fixed edge independent of cartridge
-	// SDRAM refresh and arbitration.
-	cache_ram #(
+	// SDRAM refresh and arbitration. Port B is a read-only observation port
+	// for the RetroAchievements mirror; it cannot disturb port A timing.
+	cache_ram_dp #(
 		.ADDR_WIDTH (15),
 		.DATA_WIDTH (8)
 	) u_wram_upper (
-		.clk_i   (clk_i),
-		.addr_i  (wram_addr_w),
-		.wren_i  (wram_u_wren_w),
-		.wdata_i (wram_u_din_w),
-		.q_o     (wram_peek_u_w)
+		.clk_i     (clk_i),
+		.addr_a_i  (wram_addr_w),
+		.wren_a_i  (wram_u_wren_w),
+		.wdata_a_i (wram_u_din_w),
+		.q_a_o     (wram_peek_u_w),
+		.addr_b_i  (ra_wram_addr_i),
+		.wren_b_i  (1'b0),
+		.wdata_b_i (8'd0),
+		.q_b_o     (ra_wram_udata_o)
 	);
 
-	cache_ram #(
+	cache_ram_dp #(
 		.ADDR_WIDTH (15),
 		.DATA_WIDTH (8)
 	) u_wram_lower (
-		.clk_i   (clk_i),
-		.addr_i  (wram_addr_w),
-		.wren_i  (wram_l_wren_w),
-		.wdata_i (wram_l_din_w),
-		.q_o     (wram_peek_l_w)
+		.clk_i     (clk_i),
+		.addr_a_i  (wram_addr_w),
+		.wren_a_i  (wram_l_wren_w),
+		.wdata_a_i (wram_l_din_w),
+		.q_a_o     (wram_peek_l_w),
+		.addr_b_i  (ra_wram_addr_i),
+		.wren_b_i  (1'b0),
+		.wdata_b_i (8'd0),
+		.q_b_o     (ra_wram_ldata_o)
 	);
 
 	// VUE timer, controller, communication, WCR, and rumble.

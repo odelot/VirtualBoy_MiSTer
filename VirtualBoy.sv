@@ -254,10 +254,15 @@ module emu
 	wire [1:0] video_scale                 = status[37:36];
 	wire       large_sram_enabled          = status[40];
 	wire       presentation_hlg_enabled    = status[47];
+	// RetroAchievements hardcore mode (set by Main via status[63]): forces
+	// cheats off and blocks every restore vector (savestate load, TAS
+	// playback) in hardware. Saving a state remains allowed.
+	wire       hardcore                    = status[63];
 	reg        crop_216_available;
 
 	wire [15:0] status_menumask = {
-		8'd0,
+		7'd0,
+		hardcore,
 		savestate_menu_enabled,
 		4'd0,
 		crop_216_available,
@@ -280,11 +285,11 @@ module emu
 		"VirtualBoy;SS32000000:2000000;",
 		"FS1,VB ,Load ROM;",
 		"-;",
-		"C,Cheats;",
+		"H8C,Cheats;",
 		"-;",
 		"O[46:45],Savestate Slot,1,2,3,4;",
 		"d7rA,Save State(Alt+F1-F4);",
-		"d7rB,Restore State(F1-F4);",
+		"H8d7rB,Restore State(F1-F4);",
 		"-;",
 		"P1,Audio & Video;",
 		"P1-;",
@@ -314,7 +319,7 @@ module emu
 		"P2R9,Load Backup RAM;",
 		"P2RA,Save Backup RAM;",
 		"P2OB,Autosave,On,Off;",
-		"P2F5,TAS,Load TAS;",
+		"H8P2F5,TAS,Load TAS;",
 		"-;",
 		"R0,Reset;",
 		"J1,A,B,L,R,Select,Start,R.Right,R.Left,R.Down,R.Up,Save State;",
@@ -1218,8 +1223,9 @@ module emu
 	vb_tas_player u_tas_player (
 		.clk_i          (clk_sys),
 		.reset_i        (~pll_locked),
-		.cancel_i       (reset_button | rom_download | savestate_restore_begin),
-		.download_i     (tas_download),
+		.cancel_i       (reset_button | rom_download | savestate_restore_begin |
+			hardcore),
+		.download_i     (tas_download & ~hardcore),
 		.write_i        (ioctl_wr),
 		.addr_i         (ioctl_addr),
 		.data_i         (ioctl_dout),
@@ -1268,6 +1274,91 @@ module emu
 		.shared_ready_i (shared_aux_ddr_ready)
 	);
 
+	///////////////////////   RETROACHIEVEMENTS   ////////////////////
+
+	// Declared here (ahead of the core section) so the RA mirror below can
+	// observe the VIP blanking directly.
+	wire       video_hblank;
+	wire       video_vblank;
+
+	// Selective Address mirror: WRAM through a dedicated BRAM port B,
+	// cartridge RAM through its coherent DDR3 shadow. RA never touches the
+	// SDRAM controller, so cartridge timing is unaffected; the only shared
+	// resource is the DDR bridge, where the CPU-facing shadow/TAS side
+	// (arbiter ch2 below) keeps priority over RA at every idle boundary.
+	wire [14:0] ra_wram_addr;
+	wire  [7:0] ra_wram_udout;
+	wire  [7:0] ra_wram_ldout;
+	wire [27:1] ra_ddram_addr;
+	wire [63:0] ra_ddram_din;
+	wire        ra_ddram_req;
+	wire        ra_ddram_rnw;
+	wire  [7:0] ra_ddram_be;
+	wire [63:0] ra_ddram_dout;
+	wire        ra_ddram_ready;
+	wire [27:1] shared_all_ddr_addr;
+	wire [63:0] shared_all_ddr_dout;
+	wire [63:0] shared_all_ddr_din;
+	wire        shared_all_ddr_req;
+	wire        shared_all_ddr_rnw;
+	wire [7:0]  shared_all_ddr_be;
+	wire        shared_all_ddr_ready;
+
+	ra_ram_mirror_vb u_ra_ram_mirror (
+		.clk           (clk_sys),
+		.reset         (core_reset),
+		// Collection pauses with the savestate walker so the mirror never
+		// samples memories mid-restore; frames stop advancing while the
+		// core is frozen, exactly like an emulator pause.
+		.vblank        (video_vblank & ~sleep_savestate),
+
+		.wram_addr     (ra_wram_addr),
+		.wram_udout    (ra_wram_udout),
+		.wram_ldout    (ra_wram_ldout),
+
+		.cram_packed   (cart_sram_packed_x8_w),
+		.cram_cpu_mask (cart_sram_cpu_addr_mask_w),
+
+		.ddram_addr    (ra_ddram_addr),
+		.ddram_din     (ra_ddram_din),
+		.ddram_req     (ra_ddram_req),
+		.ddram_rnw     (ra_ddram_rnw),
+		.ddram_be      (ra_ddram_be),
+		.ddram_dout    (ra_ddram_dout),
+		.ddram_ready   (ra_ddram_ready),
+
+		.active        (),
+		.dbg_frame_counter ()
+	);
+
+	// Second arbiter tier: the established aux clients (SRAM shadow + TAS,
+	// on the priority port) share the ddram bridge channel with RA.
+	vb_ddr_channel_arbiter u_ra_ddr_arbiter (
+		.clk_i          (clk_sys),
+		.reset_i        (~pll_locked),
+		.ch1_addr_i     (ra_ddram_addr),
+		.ch1_dout_o     (ra_ddram_dout),
+		.ch1_din_i      (ra_ddram_din),
+		.ch1_req_i      (ra_ddram_req),
+		.ch1_rnw_i      (ra_ddram_rnw),
+		.ch1_be_i       (ra_ddram_be),
+		.ch1_ready_o    (ra_ddram_ready),
+		.ch2_addr_i     (shared_aux_ddr_addr),
+		.ch2_dout_o     (shared_aux_ddr_dout),
+		.ch2_din_i      (shared_aux_ddr_din),
+		.ch2_req_i      (shared_aux_ddr_req),
+		.ch2_rnw_i      (shared_aux_ddr_rnw),
+		.ch2_be_i       (shared_aux_ddr_be),
+		.ch2_ready_o    (shared_aux_ddr_ready),
+		.shared_addr_o  (shared_all_ddr_addr),
+		.shared_dout_i  (shared_all_ddr_dout),
+		.shared_din_o   (shared_all_ddr_din),
+		.shared_req_o   (shared_all_ddr_req),
+		.shared_rnw_o   (shared_all_ddr_rnw),
+		.shared_be_o    (shared_all_ddr_be),
+		.shared_ready_i (shared_all_ddr_ready)
+	);
+
 	ddram u_savestate_ddram (
 		.DDRAM_CLK        (clk_sys),
 		.DDRAM_BUSY       (DDRAM_BUSY),
@@ -1286,13 +1377,13 @@ module emu
 		.ch1_rnw          (savestate_ddr_rnw),
 		.ch1_be           (savestate_ddr_be),
 		.ch1_ready        (savestate_ddr_ack),
-		.ch2_addr         (shared_aux_ddr_addr),
-		.ch2_dout         (shared_aux_ddr_dout),
-		.ch2_din          (shared_aux_ddr_din),
-		.ch2_req          (shared_aux_ddr_req),
-		.ch2_rnw          (shared_aux_ddr_rnw),
-		.ch2_be           (shared_aux_ddr_be),
-		.ch2_ready        (shared_aux_ddr_ready)
+		.ch2_addr         (shared_all_ddr_addr),
+		.ch2_dout         (shared_all_ddr_dout),
+		.ch2_din          (shared_all_ddr_din),
+		.ch2_req          (shared_all_ddr_req),
+		.ch2_rnw          (shared_all_ddr_rnw),
+		.ch2_be           (shared_all_ddr_be),
+		.ch2_ready        (shared_all_ddr_ready)
 	);
 
 	savestate_ui #(
@@ -1329,7 +1420,7 @@ module emu
 		.rewind_active     (1'b0),
 		.savestate_number  ({30'd0, savestate_slot}),
 		.save              (savestate_ui_save),
-		.load              (savestate_ui_load),
+		.load              (savestate_ui_load & ~hardcore),
 		.sleep_rewind      (),
 		.vsync             (public_video_vsync),
 		.request_savestate (savestate_savestate),
@@ -1425,8 +1516,6 @@ module emu
 	wire [1:0] video_raw_right_raw;
 	wire [7:0] video_luma_left_raw;
 	wire [7:0] video_luma_right_raw;
-	wire       video_hblank;
-	wire       video_vblank;
 
 	wire [15:0] pad_buttons = {
 		joystick_0[12], // RD
@@ -1510,8 +1599,13 @@ module emu
 		.savestate_mem_wren_i          (core_mem_wren),
 		.savestate_mem_wdata_i         (core_mem_wdata),
 		.savestate_mem_rdata_o         (savestate_core_mem_rdata),
-		.cheat_clear_i                 (cheat_clear),
+		// Hardcore holds the cheat table cleared so no code can apply.
+		.cheat_clear_i                 (cheat_clear | hardcore),
 		.cheat_code_i                  (cheat_code),
+
+		.ra_wram_addr_i                (ra_wram_addr),
+		.ra_wram_udata_o               (ra_wram_udout),
+		.ra_wram_ldata_o               (ra_wram_ldout),
 
 		.pad_buttons_i                 (core_pad_buttons),
 		.cart_irq_i                    (1'b0),
