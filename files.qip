@@ -6,6 +6,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE VirtualBoy.sv
 set_global_assignment -name QIP_FILE rtl/pll.qip
 set_global_assignment -name VERILOG_FILE rtl/Mem/cache_ram.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vb_ddr_channel_arbiter.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ra_ram_mirror_vb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vb_tas_player.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vb_video_output.sv
 set_global_assignment -name VERILOG_FILE rtl/Mem/ddram.v
