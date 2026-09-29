@@ -1,4 +1,39 @@
-# Virtual Boy
+# Virtual Boy — RetroAchievements Fork
+
+This is a fork of the Virtual Boy MiSTer core with **RetroAchievements** support. It needs the modified [Main_MiSTer binary](https://github.com/odelot/Main_MiSTer) to work (see its README for setup, including RetroAchievements credentials).
+
+## RetroAchievements
+
+### Files Added
+
+| File | Purpose |
+|------|--------|
+| `rtl/ra_ram_mirror_vb.sv` | Reads the RAM addresses requested by the ARM every VBlank and writes the values to DDRAM (Selective Address protocol), plus the RTQuery mailbox for on-demand reads |
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `VirtualBoy.sv` | RA mirror instantiated and chained onto the DDRAM channel arbiter, hardcore guardrails (status bit 63) |
+| `rtl/virtualboy.v` | WRAM exposed on a dedicated read port for the RA mirror |
+| `files.qip` | Adds the RA mirror |
+
+### Memory regions exposed
+
+| Region | RA Address Range | Size | Source |
+|--------|-----------------|------|--------|
+| System RAM / WRAM | `$00000–$0FFFF` | 64 KB | Dual-port BRAM, port B used only by RA (upper lane = odd addresses, lower = even) |
+| Cartridge RAM | `$10000–$1FFFF` | 64 KB window | DDR3 shadow of the cart SRAM at `0x30000000` |
+
+Cart RAM is read from the DDR3 shadow, not the live SRAM. Every CPU write reaches the shadow before it completes, so the shadow is always current and RA reads never compete with the game. Byte mapping matches what the CPU sees at `0x06000000 + n`: `(n & mask) >> 1` for the packed x8 layout (32 KB saves), `(n & mask)` for the container layout. Addresses outside both regions read as `0x00`.
+
+Between VBlanks the mirror serves the **RTQuery mailbox**, which Main uses for **Smart Cache** mode (on by default): pointer targets that move are resolved live.
+
+### Hardcore Mode
+
+With `hardcore=1` in `retroachievements.cfg`, Main sets status bit 63 and the core enforces the restrictions in hardware: cheats are cleared and hidden, and Restore State and Load TAS are blocked. Creating savestates is still allowed. Virtual Boy is **officially supported** for hardcore.
+
+## About the core
 
 The notorious early 3D experiment by Nintendo. This core recreates the Virtual Boy console faithfully in all it's bright-red 50hz hz stereo glory.
 
